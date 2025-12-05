@@ -6,23 +6,39 @@ const fs = require("fs");
 const path = require("path");
 const { promisify } = require('util');
 const exec = promisify(require('child_process').exec);
-const { execSync } = require('child_process');        // 只填写UPLOAD_URL将上传节点,同时填写UPLOAD_URL和PROJECT_URL将上传订阅
-const UPLOAD_URL = process.env.UPLOAD_URL || '';      // 节点或订阅自动上传地址,需填写部署Merge-sub项目后的首页地址,例如：https://merge.xxx.com
-const PROJECT_URL = process.env.PROJECT_URL || '';    // 需要上传订阅或保活时需填写项目分配的url,例如：https://google.com
-const AUTO_ACCESS = process.env.AUTO_ACCESS || false; // false关闭自动保活，true开启,需同时填写PROJECT_URL变量
-const FILE_PATH = process.env.FILE_PATH || './tmp';   // 运行目录,sub节点文件保存目录
-const SUB_PATH = process.env.SUB_PATH || 'sub';       // 订阅路径
-const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;        // http服务订阅端口
-const UUID = process.env.UUID || '9afd1229-b893-40c1-84dd-51e7ce204913'; // 使用哪吒v1,在不同的平台运行需修改UUID,否则会覆盖
-const NEZHA_SERVER = process.env.NEZHA_SERVER || '';        // 哪吒v1填写形式: nz.abc.com:8008  哪吒v0填写形式：nz.abc.com
-const NEZHA_PORT = process.env.NEZHA_PORT || '';            // 使用哪吒v1请留空，哪吒v0需填写
-const NEZHA_KEY = process.env.NEZHA_KEY || '';              // 哪吒v1的NZ_CLIENT_SECRET或哪吒v0的agent密钥
-const ARGO_DOMAIN = process.env.ARGO_DOMAIN || '';          // 固定隧道域名,留空即启用临时隧道
-const ARGO_AUTH = process.env.ARGO_AUTH || '';              // 固定隧道密钥json或token,留空即启用临时隧道,json获取地址：https://json.zone.id
-const ARGO_PORT = process.env.ARGO_PORT || 8001;            // 固定隧道端口,使用token需在cloudflare后台设置和这里一致
-const CFIP = process.env.CFIP || 'cdns.doon.eu.org';        // 节点优选域名或优选ip  
-const CFPORT = process.env.CFPORT || 443;                   // 节点优选域名或优选ip对应的端口
-const NAME = process.env.NAME || '';                        // 节点名称
+const { execSync } = require('child_process');
+
+// --------------------------------------------------
+// ⭐ 关键变量：已移除所有默认值，完全依赖环境变量
+// --------------------------------------------------
+const UPLOAD_URL = process.env.UPLOAD_URL || '';
+const PROJECT_URL = process.env.PROJECT_URL || '';
+const AUTO_ACCESS = process.env.AUTO_ACCESS || false;
+const FILE_PATH = process.env.FILE_PATH || './tmp';
+const SUB_PATH = process.env.SUB_PATH || 'sub';
+const PORT = process.env.SERVER_PORT || process.env.PORT || 3000;
+
+// ❗ UUID、ARGO_DOMAIN、ARGO_AUTH：现在必须通过环境变量设置，否则为空
+const UUID = process.env.UUID; 
+const NEZHA_SERVER = process.env.NEZHA_SERVER || '';
+const NEZHA_PORT = process.env.NEZHA_PORT || '';
+const NEZHA_KEY = process.env.NEZHA_KEY || '';
+const ARGO_DOMAIN = process.env.ARGO_DOMAIN;
+const ARGO_AUTH = process.env.ARGO_AUTH;
+const ARGO_PORT = process.env.ARGO_PORT || 8001;
+const CFIP = process.env.CFIP || 'cdns.doon.eu.org';
+const CFPORT = process.env.CFPORT || 443;
+const NAME = process.env.NAME || '';
+
+// --------------------------------------------------
+// ⭐ 新增启动检查：确保 UUID 存在
+// --------------------------------------------------
+if (!UUID) {
+    console.error("❌ 严重错误: 环境变量 UUID 缺失。请设置 UUID 来启动服务！");
+    process.exit(1); // 终止进程，防止使用硬编码的默认值
+}
+// --------------------------------------------------
+
 
 // 创建运行文件夹
 if (!fs.existsSync(FILE_PATH)) {
@@ -298,11 +314,17 @@ uuid: ${UUID}`;
   if (fs.existsSync(botPath)) {
     let args;
 
-    if (ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) {
-      args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
-    } else if (ARGO_AUTH.match(/TunnelSecret/)) {
-      args = `tunnel --edge-ip-version auto --config ${FILE_PATH}/tunnel.yml run`;
+    // ARGO_AUTH 和 ARGO_DOMAIN 现在完全依赖环境变量
+    if (ARGO_AUTH && ARGO_DOMAIN) {
+      if (ARGO_AUTH.match(/^[A-Z0-9a-z=]{120,250}$/)) {
+        args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token ${ARGO_AUTH}`;
+      } else if (ARGO_AUTH.match(/TunnelSecret/)) {
+        args = `tunnel --edge-ip-version auto --config ${FILE_PATH}/tunnel.yml run`;
+      } else {
+        args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
+      }
     } else {
+      // 临时隧道逻辑（与原代码行为一致，留空即启用临时隧道）
       args = `tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile ${FILE_PATH}/boot.log --loglevel info --url http://localhost:${ARGO_PORT}`;
     }
 
@@ -358,6 +380,7 @@ function getFilesForArchitecture(architecture) {
 
 // 获取固定隧道json
 function argoType() {
+  // 检查 ARGO_AUTH 和 ARGO_DOMAIN 是否存在
   if (!ARGO_AUTH || !ARGO_DOMAIN) {
     console.log("ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels");
     return;
@@ -388,6 +411,7 @@ argoType();
 async function extractDomains() {
   let argoDomain;
 
+  // ARGO_AUTH 和 ARGO_DOMAIN 现在完全依赖环境变量
   if (ARGO_AUTH && ARGO_DOMAIN) {
     argoDomain = ARGO_DOMAIN;
     console.log('ARGO_DOMAIN:', argoDomain);
@@ -523,9 +547,9 @@ async function uploadNodes() {
           if (response && response.status === 200) {
             console.log('Nodes uploaded successfully');
             return response;
-        } else {
-            return null;
-        }
+          } else {
+              return null;
+          }
       } catch (error) {
           return null;
       }
